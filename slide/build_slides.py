@@ -276,8 +276,9 @@ TAG[0] = ""
 s = frame("Nội dung trình bày")
 items = [
     ("**1. Cơ sở lý thuyết**", 0),
-    ("ListView & ListView.builder  •  GridView & SliverGridDelegate", 1),
-    ("ScrollController & lazy loading", 1),
+    ("Cơ chế cuộn: Viewport & Sliver, nguyên lý bố cục (constraints)", 1),
+    ("Dựng lười: Widget – Element – RenderObject; ListView, GridView", 1),
+    ("ScrollController, ScrollPhysics, lazy loading & phân trang", 1),
     ("Cuộn lồng nhau, SingleChildScrollView, shrinkWrap", 1),
     ("Item kích thước khác nhau, trạng thái rỗng, RefreshIndicator", 1),
     ("**2. Thực hành – demo ứng dụng “Thư viện mini”**", 0),
@@ -292,98 +293,138 @@ bullets(s, 0.9, 1.4, 11.5, 5.3, items, size=24, gap=10)
 T1 = "1 · CƠ SỞ LÝ THUYẾT"
 TAG[0] = T1
 
-code_slide("ListView & ListView.builder", """
-ListView.builder(
-  itemCount: items.length,
-  itemBuilder: (context, index) {
-    return ListTile(
-      title: Text(items[index]),
-    );
-  },
-)
-""", "Cuộn dọc / ngang, dựng lazy", [
-    "**ListView(children)**: dựng toàn bộ con – chỉ dùng khi ít phần tử.",
-    "**ListView.builder**: `itemBuilder` chỉ chạy cho item sắp hiện ra ⇒ hợp với danh sách dài.",
-    "**.separated** thêm đường phân cách; `scrollDirection: Axis.horizontal` cho danh sách ngang.",
-], split=5.9, pics=[("list_view.png", "ListView"), ("long-lists.png", "Long list (cookbook)")],
-    src="docs.flutter.dev/cookbook/lists/long-lists · api.flutter.dev/flutter/widgets/ListView-class.html")
 
-code_slide("GridView & SliverGridDelegate", """
-GridView.builder(
-  gridDelegate:
-    SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: 2,
-      childAspectRatio: 0.7,
-      crossAxisSpacing: 8,
-      mainAxisSpacing: 8,
-    ),
-  itemCount: books.length,
-  itemBuilder: (_, i) => BookCard(books[i]),
-)
-""", "Lưới 2 chiều, cũng lazy", [
-    "**GridView.count / .extent / .builder**; `gridDelegate` quy định cách chia ô.",
-    "**FixedCrossAxisCount**: cố định số cột. **MaxCrossAxisExtent**: ô rộng tối đa N px, số cột tự tính.",
-    "**childAspectRatio** hoặc **mainAxisExtent** quyết định hình dạng ô ⇒ ô có kích thước cố định.",
-], split=6.5, pics=[("gridview-count.png", "GridView.count"), ("gridview-extent.png", "GridView.extent")],
-    src="api.flutter.dev/flutter/widgets/GridView-class.html · docs.flutter.dev/ui/layout (GridView)")
+def theory(title, items, pics, src, size=19, textw=6.6, gap=9, wide=False):
+    """Slide lý thuyết: gạch đầu dòng bên trái, sơ đồ (có chú thích) bên phải. Không có code.
+    pics: [(file, caption, height_in)]"""
+    s = frame(title)
+    if wide:  # chữ phía trên, một sơ đồ rộng phía dưới
+        bullets(s, 0.5, 1.2, W - 1.0, 3.0, items, size=size, gap=gap)
+        f, cap, h = pics[0]
+        picture_fit(s, os.path.join(A, f), 0.5, 4.2, W - 1.0, h)
+        text(s, 0.5, 4.2 + h + 0.02, W - 1.0, 0.3, cap, size=11, color=GRAY, italic=True, align=PP_ALIGN.CENTER)
+        source(s, src)
+        return s
+    bullets(s, 0.5, 1.3, textw, 5.4, items, size=size, gap=gap)
+    x0 = 0.5 + textw + 0.3
+    pw = W - x0 - 0.4
+    total = sum(h for _, _, h in pics) + 0.4 * len(pics)
+    y = 1.3 + max(0, (5.3 - total) / 2)
+    for f, cap, h in pics:
+        picture_fit(s, os.path.join(A, f), x0, y, pw, h)
+        text(s, x0, y + h + 0.02, pw, 0.3, cap, size=11, color=GRAY, italic=True, align=PP_ALIGN.CENTER)
+        y += h + 0.4
+    source(s, src)
+    return s
 
-code_slide("ScrollController & lazy loading", """
-_controller.addListener(() {
-  final p = _controller.position;
-  if (p.pixels >= p.maxScrollExtent - 200
-      && !_isLoading && _hasMore) {
-    _loadMore();
-  }
-});
 
-// itemCount = 1 + books.length
-//             + (_isLoading ? 1 : 0)
-// item cuối: CircularProgressIndicator
-""", "Cuộn gần cuối ⇒ tải thêm", [
-    "**position.pixels** (vị trí hiện tại) so với **maxScrollExtent** (cuối danh sách).",
-    "Cờ `_isLoading`, `_hasMore` chặn gọi trùng và dừng khi hết dữ liệu.",
-    "Item cuối là vòng xoay tải; nhớ **dispose** ScrollController.",
-], split=6.4, pics=[("mixed-list.png", "List cuộn (cookbook)")],
-    src="api.flutter.dev/flutter/widgets/ScrollController-class.html · Viblo: “Lazy load trong Flutter” (viblo.asia/p/lazy-load-trong-flutter-3Q75wE03ZWb)")
+theory("Cơ chế cuộn trong Flutter: Viewport & Sliver", [
+    "Mọi widget cuộn (ListView, GridView, CustomScrollView…) đều gồm **Scrollable** + **Viewport**.",
+    "**Scrollable**: nhận cử chỉ (kéo, vuốt), tính vị trí cuộn và quán tính.",
+    "**Viewport**: “ô cửa sổ” chỉ cho nhìn thấy một đoạn của nội dung dài hơn nó.",
+    "Con của Viewport là **Sliver** – một “lát cắt” nội dung biết bố cục theo vùng nhìn thấy.",
+    "Sliver nhận **SliverConstraints** (đang cuộn tới đâu, còn bao nhiêu vùng vẽ…) rồi trả **SliverGeometry** (chiếm bao nhiêu chỗ) ⇒ chỉ dựng phần cần thiết.",
+    "ListView ≈ CustomScrollView + 1 **SliverList**; GridView ≈ CustomScrollView + 1 **SliverGrid**.",
+], [("sliver-hierarchy.png", "Widget / RenderObject: RenderSliver bên cạnh RenderBox", 1.7),
+    ("SliverConstraints.png", "RenderSliver dùng SliverConstraints thay cho BoxConstraints", 1.7)],
+    "Kodeco – “Slivers in Flutter: Getting Started” (kodeco.com/19539821) · api.flutter.dev/flutter/widgets/Viewport-class.html")
 
-code_slide("Cuộn lồng nhau & SingleChildScrollView", """
-SizedBox(
-  height: 160,        // bắt buộc cố định
-  child: ListView.builder(
-    scrollDirection: Axis.horizontal,
-    itemCount: featured.length,
-    itemBuilder: (_, i) =>
-        BookCard(book: featured[i]),
-  ),
-)
-""", "Chọn đúng widget cuộn", [
-    "**Cuộn lồng nhau**: ListView ngang là item 0 của ListView dọc; cần **chiều cao cố định**.",
-    "Tránh `shrinkWrap: true` với dữ liệu dài: dựng hết item, mất lazy.",
-    "**SingleChildScrollView**: nội dung ít, cố định (form, chi tiết); dựng cả con cùng lúc ⇒ **không** dùng cho danh sách dài.",
-    "Gộp nhiều khối cuộn: **CustomScrollView + Sliver**.",
-], split=6.4, pics=[("floating-app-bar.png", "CustomScrollView + SliverAppBar")],
-    src="docs.flutter.dev/ui/layout/scrolling/slivers · Medium: “Common mistakes with ListViews in Flutter” (medium.com/@pomis172)")
+theory("Nguyên lý bố cục: ràng buộc đi xuống, kích thước đi lên", [
+    "Bố cục Flutter chạy một lượt trên cây: **cha truyền ràng buộc xuống** (min/max rộng, cao).",
+    "**Con chọn kích thước** trong khoảng cho phép rồi **báo ngược lên** cha.",
+    "**Cha quyết định vị trí** của con; con không tự biết mình nằm đâu.",
+    "Vùng cuộn có **chiều cuộn không giới hạn** (unbounded) ⇒ nội dung có thể dài vô hạn.",
+    "Hệ quả: đặt widget cuộn trong widget cũng không giới hạn chiều (Column, một ListView khác) ⇒ viewport không biết cao bao nhiêu ⇒ lỗi **“Vertical viewport was given unbounded height”**.",
+    "Cách xử lý: cho viewport một **chiều cao xác định** (SizedBox, Expanded).",
+], [("constraints-sizes.png", "“Constraints go down. Sizes go up. Parent sets position.”", 4.0)],
+    "docs.flutter.dev/resources/architectural-overview · docs.flutter.dev/ui/layout/constraints")
 
-code_slide("Item khác kích thước, trạng thái rỗng, làm mới", """
-Text(description,
-  maxLines: expanded ? null : 2,
-  overflow: TextOverflow.ellipsis);
+theory("Vì sao dựng lười rẻ? Widget – Element – Render", [
+    "Flutter có **3 cây** song song: **Widget** (mô tả cấu hình, bất biến), **Element** (thể hiện, giữ vòng đời), **RenderObject** (đo, bố cục, vẽ).",
+    "Widget rất nhẹ, tạo mới mỗi lần build; **Element/RenderObject được tái sử dụng** khi kiểu widget không đổi.",
+    "Danh sách dùng **builder**: Sliver chỉ yêu cầu delegate tạo widget cho **index đang cần**, rồi huỷ khi ra khỏi vùng.",
+    "⇒ Số RenderObject sống cùng lúc ~ số item **nhìn thấy**, không phụ thuộc tổng số item (10 hay 10 000).",
+], [("trees.png", "Cây Widget → Element → Render (tài liệu Flutter)", 2.6)],
+    "docs.flutter.dev/resources/architectural-overview (Widgets, Elements, RenderObjects)", size=17, gap=5, wide=True)
 
-if (shown.isEmpty) {
-  return const EmptyView(
-    message: 'Không tìm thấy sách');
-}
+theory("ListView: dựng toàn bộ so với dựng lười", [
+    "**Dựng toàn bộ** (children: [...]): tạo mọi item ngay từ đầu ⇒ O(n) về thời gian và bộ nhớ; chỉ hợp khi danh sách **ngắn, cố định**.",
+    "**Dựng lười** (builder): chỉ tạo item **giao với viewport** cộng một vùng đệm **cacheExtent** (mặc định 250 px) để cuộn mượt.",
+    "Item ra khỏi vùng nhìn thấy bị huỷ/tái chế; trạng thái bên trong item không tự giữ (cần KeepAlive nếu muốn).",
+    "Cần biết trước **số lượng** (itemCount) để tính thanh cuộn; nếu không, danh sách coi như vô hạn.",
+    "Biến thể: **separated** (chèn ngăn cách giữa các item), **hướng ngang** (scrollDirection).",
+], [("diagram-viewport.png", "Chỉ item trong viewport (xanh) và vùng đệm (vàng) được dựng", 4.0)],
+    "Sơ đồ: nhóm tự vẽ · api.flutter.dev/flutter/widgets/ListView-class.html · docs.flutter.dev/cookbook/lists/long-lists")
 
-RefreshIndicator(
-  onRefresh: _reload,
-  child: ListView.builder(...),
-)
-""", "3 tình huống thường gặp", [
-    "**Kích thước khác nhau**: không đặt `itemExtent`, ListView tự đo; mở rộng/thu gọn bằng `setState`.",
-    "**Rỗng**: kiểm tra `isEmpty` ⇒ EmptyView (icon + thông báo).",
-    "**Kéo để làm mới**: `RefreshIndicator`, `onRefresh` trả về Future.",
-], split=6.1, pics=[("refresh.png", "RefreshIndicator")],
-    src="api.flutter.dev/flutter/material/RefreshIndicator-class.html · docs.flutter.dev/cookbook/lists/long-lists")
+theory("GridView: nguyên lý chia ô qua SliverGridDelegate", [
+    "Lưới cũng là sliver lười; **gridDelegate** quyết định cách **chia trục ngang (cross axis)**; trục cuộn (main axis) kéo dài vô hạn.",
+    "**FixedCrossAxisCount**: cố định N cột ⇒ rộng ô = (bề rộng − khoảng cách × (N−1)) / N.",
+    "**MaxCrossAxisExtent**: mỗi ô rộng tối đa X px ⇒ số cột **tự tính** theo bề rộng màn hình (thích ứng xoay máy, tablet).",
+    "Chiều cao ô = rộng ô / **childAspectRatio**, hoặc đặt cứng bằng **mainAxisExtent**.",
+    "Mọi ô trong một hàng **cùng chiều cao** ⇒ lưới đều, khác với danh sách có item co giãn.",
+], [("diagram-grid.png", "Hai trục của lưới và các khoảng cách", 3.1),
+    ("grid-list.png", "Ví dụ lưới (cookbook)", 1.7)],
+    "Sơ đồ: nhóm tự vẽ · api.flutter.dev/flutter/widgets/GridView-class.html · SliverGridDelegate*", size=18)
+
+theory("ScrollController, ScrollPosition & ScrollPhysics", [
+    "**ScrollPosition**: trạng thái cuộn hiện tại – `pixels` (vị trí), `minScrollExtent`, `maxScrollExtent`, `viewportDimension`.",
+    "**ScrollController**: gắn vào widget cuộn để **đọc/điều khiển** vị trí (`jumpTo`, `animateTo`) và lắng nghe thay đổi; phải **dispose**.",
+    "Cách khác: **NotificationListener<ScrollNotification>** lắng nghe từ ngoài, không cần controller.",
+    "**ScrollPhysics** quyết định “cảm giác” cuộn: **Clamping** (Android – dừng cứng ở mép), **Bouncing** (iOS – nảy lại), **NeverScrollable**, **AlwaysScrollable**.",
+    "Phần còn lại chưa xem ≈ `maxScrollExtent − pixels`.",
+], [("long-lists.png", "Danh sách dài cuộn trong viewport (cookbook)", 3.8)],
+    "api.flutter.dev/flutter/widgets/ScrollController-class.html · ScrollPosition · ScrollPhysics")
+
+theory("Lazy loading (infinite scroll) & phân trang", [
+    "**Lazy rendering** (dựng item khi cần) khác **lazy loading** (tải dữ liệu khi cần): hai kỹ thuật bổ sung nhau.",
+    "Dữ liệu lớn không nạp một lần: chia **trang** (offset/limit hoặc con trỏ cursor), cuộn gần cuối mới tải trang kế.",
+    "Dùng **ngưỡng** (cách cuối vài trăm px) để tải **trước** khi người dùng chạm đáy ⇒ không bị khựng.",
+    "Cần **cờ trạng thái**: đang tải (tránh gọi trùng) và còn dữ liệu (dừng khi hết).",
+    "UX: hiện **chỉ báo tải** ở cuối danh sách; hết dữ liệu thì thông báo rõ ràng.",
+], [("diagram-lazyload-flow.png", "Luồng tải thêm khi cuộn", 2.4)],
+    "Sơ đồ: nhóm tự vẽ · Viblo: “Lazy load trong Flutter” (viblo.asia/p/lazy-load-trong-flutter-3Q75wE03ZWb)", size=17, gap=5, wide=True)
+
+s = frame("Cuộn lồng nhau, SingleChildScrollView & shrinkWrap")
+table_rows = [
+    ["", "SingleChildScrollView", "ListView.builder", "shrinkWrap: true"],
+    ["Cách dựng", "Dựng toàn bộ con", "Lười, theo viewport", "Đo toàn bộ item"],
+    ["Độ phức tạp", "O(n)", "O(số item hiển thị)", "O(n)"],
+    ["Hợp với", "Nội dung ngắn, cố định (form, trang chi tiết)", "Danh sách dài/không biết trước", "Danh sách rất ngắn lồng trong vùng khác"],
+    ["Nhược điểm", "Chậm/tốn RAM nếu nhiều con", "Cần chiều cao xác định", "Mất lợi thế lazy"],
+]
+nr, nc = len(table_rows), 4
+widths = [1.9, 3.6, 3.4, 3.4]
+gt = s.shapes.add_table(nr, nc, Inches(0.5), Inches(1.3), Inches(sum(widths)), Inches(0.62 * nr))
+t = gt.table
+for j, wd in enumerate(widths):
+    t.columns[j].width = Inches(wd)
+for i, row in enumerate(table_rows):
+    for j, val in enumerate(row):
+        c = t.cell(i, j); c.text = ""
+        r = c.text_frame.paragraphs[0].add_run(); r.text = val
+        r.font.size = Pt(15); r.font.name = FONT
+        c.fill.solid(); c.vertical_anchor = MSO_ANCHOR.MIDDLE
+        if i == 0:
+            c.fill.fore_color.rgb = NAVY; r.font.bold = True; r.font.color.rgb = WHITE
+        else:
+            c.fill.fore_color.rgb = PANEL if i % 2 else WHITE
+            r.font.color.rgb = NAVY if j == 0 else BLACK; r.font.bold = (j == 0)
+bullets(s, 0.5, 4.55, W - 1.0, 2.3, [
+    "**Cuộn lồng nhau khác hướng** (ngang trong dọc): hợp lệ, cần cho widget trong **một chiều cao cố định**.",
+    "**Cuộn lồng cùng hướng**: hai vùng tranh cử chỉ, trải nghiệm xấu ⇒ gộp bằng **CustomScrollView + nhiều Sliver** để chỉ có **một** viewport.",
+    "Nguyên tắc chọn: **ít & cố định** → SingleChildScrollView; **nhiều/lớn** → builder; **nhiều loại khối** → Sliver.",
+], size=17, gap=6)
+source(s, "docs.flutter.dev/ui/layout/scrolling/slivers · Medium: “Common mistakes with ListViews in Flutter” (medium.com/@pomis172)")
+
+theory("Item kích thước khác nhau, trạng thái rỗng & kéo để làm mới", [
+    "**Item kích thước khác nhau**: mỗi item tự đo theo nội dung (văn bản dài ngắn khác nhau); thanh cuộn phải **ước lượng** tổng chiều dài.",
+    "Nếu mọi item bằng nhau, khai báo **itemExtent / prototypeItem** để bỏ qua bước đo ⇒ cuộn nhanh hơn.",
+    "**Trạng thái rỗng (empty state)**: không để màn hình trắng; nêu **lý do** (chưa có dữ liệu, không khớp tìm kiếm) và **hành động tiếp** (xoá bộ lọc, thử lại).",
+    "**Kéo để làm mới (pull-to-refresh)**: người dùng kéo quá mép trên ⇒ gọi tác vụ bất đồng bộ; chỉ báo xoay **đến khi tác vụ hoàn thành**.",
+    "Yêu cầu: con phải là widget cuộn **luôn cuộn được** để nhận được cử chỉ kéo quá mép.",
+], [("mixed-list.png", "Danh sách có nhiều kiểu item (cookbook)", 2.4),
+    ("refresh.png", "RefreshIndicator – kéo để làm mới", 2.4)],
+    "docs.flutter.dev/cookbook/lists/mixed-list · api.flutter.dev/flutter/material/RefreshIndicator-class.html", size=18, textw=6.9)
 
 # ================================================================ PHẦN 2
 T2 = "2 · THỰC HÀNH – DEMO SẢN PHẨM"
@@ -542,7 +583,8 @@ bullets(s, 0.6, 1.3, 6.2, 5.5, [
 ], size=19, gap=10)
 bullets(s, 7.0, 1.3, 6.0, 5.5, [
     "docs.flutter.dev/cookbook/lists (long-lists, grid-lists, horizontal-list)",
-    "docs.flutter.dev/ui/layout/scrolling/slivers",
+    "docs.flutter.dev/ui/layout/scrolling/slivers · docs.flutter.dev/resources/architectural-overview",
+    "Kodeco: Slivers in Flutter: Getting Started (kodeco.com/19539821)",
     "api.flutter.dev: ListView, GridView, SingleChildScrollView, ScrollController, RefreshIndicator",
     "Viblo: Lazy load trong Flutter (viblo.asia/p/lazy-load-trong-flutter-3Q75wE03ZWb)",
     "Viblo: Load more và pull to refresh với GridView (viblo.asia/p/jvEla3vdKkw)",
