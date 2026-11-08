@@ -1,19 +1,18 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
-import '../data/fake_books.dart';
+import '../data/book_repository.dart';
 import '../models/book.dart';
+import '../widgets/book_card.dart';
+import '../widgets/book_tile.dart';
+import '../widgets/empty_view.dart';
+import 'book_detail_screen.dart';
 
-/// Màn hình danh sách sách.
-///
-/// Minh họa:
-/// - `ListView.builder` cho danh sách dọc (chỉ build item đang hiển thị).
-/// - Một `ListView` ngang lồng bên trong để làm dải "Sách nổi bật".
-/// - Lazy loading bằng `ScrollController`.
-/// - Item có chiều cao thay đổi nhờ mô tả dài/ngắn và nút "Xem thêm".
-/// - Trạng thái rỗng khi tìm kiếm không có kết quả.
-/// - Kéo xuống để làm mới bằng `RefreshIndicator`.
 class BookListScreen extends StatefulWidget {
-  const BookListScreen({super.key});
+  const BookListScreen({super.key, this.repository});
+
+  final BookRepository? repository;
 
   @override
   State<BookListScreen> createState() => _BookListScreenState();
@@ -21,26 +20,29 @@ class BookListScreen extends StatefulWidget {
 
 class _BookListScreenState extends State<BookListScreen> {
   static const int _pageSize = 20;
-
   final ScrollController _controller = ScrollController();
   final TextEditingController _searchController = TextEditingController();
-
-  final List<Book> _books = <Book>[];
-
-  int _page = 0;
-  bool _isLoading = false;
-  bool _hasMore = true;
+  List<Book> _allBooks = const <Book>[];
+  int _visibleCount = 0;
+  int _generation = 0;
+  bool _isReading = true;
+  bool _isLoadingMore = false;
+  Object? _error;
   String _query = '';
+
+  BookRepository get _repository => widget.repository ?? bookRepository;
+  List<Book> get _results => searchBooks(_allBooks, _query);
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onScroll);
-    _loadMore();
+    _readBooks();
   }
 
   @override
   void dispose() {
+    _generation++;
     _controller
       ..removeListener(_onScroll)
       ..dispose();
@@ -48,74 +50,77 @@ class _BookListScreenState extends State<BookListScreen> {
     super.dispose();
   }
 
-  void _onScroll() {
-    if (!_controller.hasClients) {
-      return;
+  Future<void> _readBooks({bool refresh = false}) async {
+    final int generation = ++_generation;
+    setState(() {
+      _isReading = true;
+      _isLoadingMore = false;
+      _error = null;
+    });
+    try {
+      final List<Book> books =
+          refresh ? await _repository.refresh() : await _repository.loadBooks();
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _allBooks = books;
+        _visibleCount = min(_pageSize, _results.length);
+        _isReading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _error = error;
+        _isReading = false;
+      });
     }
+  }
 
+  void _changeQuery(String value) {
+    _generation++;
+    setState(() {
+      _query = value;
+      _visibleCount = min(_pageSize, _results.length);
+      _isLoadingMore = false;
+    });
+    if (_controller.hasClients) _controller.jumpTo(0);
+  }
+
+  void _clearQuery() {
+    _searchController.clear();
+    _changeQuery('');
+  }
+
+  void _onScroll() {
+    if (!_controller.hasClients || _isReading || _error != null) return;
     final ScrollPosition position = _controller.position;
-    if (position.pixels >= position.maxScrollExtent - 200 &&
-        !_isLoading &&
-        _hasMore) {
-      _loadMore();
-    }
+    if (position.pixels >= position.maxScrollExtent - 200) _loadMore();
   }
 
   Future<void> _loadMore() async {
-    if (_isLoading || !_hasMore) {
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    final List<Book> newBooks = await fetchBooks(_page, size: _pageSize);
-    if (!mounted) {
-      return;
-    }
-
+    if (_isLoadingMore || _visibleCount >= _results.length) return;
+    final int generation = _generation;
+    setState(() => _isLoadingMore = true);
+    // Chỉ mô phỏng thời gian tải trang trên dữ liệu đã đọc trong bộ nhớ.
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted || generation != _generation) return;
     setState(() {
-      _books.addAll(newBooks);
-      _page++;
-      _hasMore = newBooks.isNotEmpty;
-      _isLoading = false;
+      _visibleCount = min(_visibleCount + _pageSize, _results.length);
+      _isLoadingMore = false;
     });
-  }
-
-  Future<void> _refresh() async {
-    setState(() {
-      _books.clear();
-      _page = 0;
-      _hasMore = true;
-      _isLoading = false;
-    });
-    await _loadMore();
-  }
-
-  List<Book> get _shownBooks {
-    final String query = _query.trim().toLowerCase();
-    if (query.isEmpty) {
-      return _books;
-    }
-    return _books
-        .where((Book book) => book.title.toLowerCase().contains(query))
-        .toList(growable: false);
   }
 
   void _openDetail(Book book) {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => _BookDetailPage(book: book)),
+      MaterialPageRoute<void>(builder: (_) => BookDetailScreen(book: book)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final List<Book> shown = _shownBooks;
-
+    final List<Book> results = _results;
+    final int visible = min(_visibleCount, results.length);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Thư viện mini'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('Thư viện mini'), centerTitle: true),
       body: Column(
         children: <Widget>[
           Padding(
@@ -124,85 +129,135 @@ class _BookListScreenState extends State<BookListScreen> {
               key: const Key('book-search-field'),
               controller: _searchController,
               textInputAction: TextInputAction.search,
-              onChanged: (String value) => setState(() => _query = value),
+              onChanged: _changeQuery,
               decoration: InputDecoration(
-                hintText: 'Tìm kiếm theo tên sách',
+                hintText: 'Tìm theo tên sách hoặc tác giả',
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _query.isEmpty
                     ? null
                     : IconButton(
                         tooltip: 'Xóa tìm kiếm',
                         icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _query = '');
-                        },
+                        onPressed: _clearQuery,
                       ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 isDense: true,
               ),
             ),
           ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refresh,
-              child: _buildContent(shown),
+          if (!_isReading && _error == null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Đã hiển thị $visible/${results.length} sách'),
+              ),
             ),
-          ),
+          Expanded(child: _buildBody(results, visible)),
         ],
       ),
     );
   }
 
-  Widget _buildContent(List<Book> shown) {
-    if (_books.isEmpty && _isLoading) {
+  Widget _buildBody(List<Book> results, int visible) {
+    if (_isReading) {
       return const Center(child: CircularProgressIndicator());
     }
-
-    if (shown.isEmpty) {
-      return const _EmptyView(message: 'Không tìm thấy sách');
+    if (_error != null) {
+      return _statusList(
+        message: 'Không đọc được dữ liệu sách.',
+        action: 'Thử lại',
+        onPressed: () => _readBooks(refresh: true),
+      );
     }
-
-    return ListView.builder(
-      key: const Key('book-list'),
-      controller: _controller,
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: 1 + shown.length + (_isLoading ? 1 : 0),
-      itemBuilder: (BuildContext context, int index) {
-        if (index == 0) {
-          return _FeaturedSection(onBookTap: _openDetail);
-        }
-
-        final int bookIndex = index - 1;
-        if (bookIndex < shown.length) {
-          final Book book = shown[bookIndex];
-          return _BookTile(
-            book: book,
-            onTap: () => _openDetail(book),
+    if (_allBooks.isEmpty) {
+      return _statusList(message: 'Chưa có sách trong dữ liệu.');
+    }
+    if (results.isEmpty) {
+      return _statusList(
+        message: 'Không tìm thấy sách',
+        action: 'Xóa tìm kiếm',
+        onPressed: _clearQuery,
+      );
+    }
+    final bool showFeatured = _query.trim().isEmpty;
+    final int prefixCount = showFeatured ? 1 : 0;
+    return RefreshIndicator(
+      onRefresh: () => _readBooks(refresh: true),
+      child: ListView.builder(
+        key: const Key('book-list'),
+        controller: _controller,
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: prefixCount + visible + 1,
+        itemBuilder: (BuildContext context, int index) {
+          if (showFeatured && index == 0) {
+            return _FeaturedSection(
+                books: _allBooks.take(10).toList(growable: false),
+                onBookTap: _openDetail);
+          }
+          final int bookIndex = index - prefixCount;
+          if (bookIndex < visible) {
+            final Book book = results[bookIndex];
+            return BookTile(
+              key: ValueKey<String>(book.isbn13),
+              book: book,
+              onTap: () => _openDetail(book),
+            );
+          }
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: _isLoadingMore
+                  ? const CircularProgressIndicator()
+                  : visible < results.length
+                      ? const SizedBox.shrink()
+                      : const Text('Đã hiển thị toàn bộ sách'),
+            ),
           );
-        }
+        },
+      ),
+    );
+  }
 
-        return const Padding(
-          padding: EdgeInsets.symmetric(vertical: 24),
-          child: Center(child: CircularProgressIndicator()),
+  Widget _statusList({
+    required String message,
+    String? action,
+    VoidCallback? onPressed,
+  }) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        return RefreshIndicator(
+          onRefresh: () => _readBooks(refresh: true),
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: 1,
+            itemBuilder: (BuildContext context, int index) => SizedBox(
+              height: constraints.maxHeight,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  EmptyView(message: message),
+                  if (action != null)
+                    TextButton(onPressed: onPressed, child: Text(action)),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
   }
 }
 
-/// Dải sách nổi bật: danh sách ngang nằm trong danh sách dọc.
 class _FeaturedSection extends StatelessWidget {
-  const _FeaturedSection({required this.onBookTap});
+  const _FeaturedSection({required this.books, required this.onBookTap});
 
+  final List<Book> books;
   final ValueChanged<Book> onBookTap;
 
   @override
   Widget build(BuildContext context) {
-    final List<Book> books = featuredBooks;
-
     return SizedBox(
       height: 220,
       child: Column(
@@ -210,10 +265,8 @@ class _FeaturedSection extends StatelessWidget {
         children: <Widget>[
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Text(
-              'Sách nổi bật',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+            child: Text('Sách nổi bật',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ),
           Expanded(
             child: ListView.builder(
@@ -222,219 +275,15 @@ class _FeaturedSection extends StatelessWidget {
               itemCount: books.length,
               itemBuilder: (BuildContext context, int index) {
                 final Book book = books[index];
-                return _FeaturedBookCard(
-                  book: book,
-                  onTap: () => onBookTap(book),
+                return SizedBox(
+                  width: 124,
+                  child: BookCard(
+                      book: book, compact: true, onTap: () => onBookTap(book)),
                 );
               },
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _FeaturedBookCard extends StatelessWidget {
-  const _FeaturedBookCard({required this.book, required this.onTap});
-
-  final Book book;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 116,
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: book.color,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Center(
-                  child: Icon(Icons.menu_book, color: Colors.white, size: 36),
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              book.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Item dạng danh sách có chiều cao thay đổi.
-class _BookTile extends StatefulWidget {
-  const _BookTile({required this.book, required this.onTap});
-
-  final Book book;
-  final VoidCallback onTap;
-
-  @override
-  State<_BookTile> createState() => _BookTileState();
-}
-
-class _BookTileState extends State<_BookTile> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final Book book = widget.book;
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Container(
-                width: 56,
-                height: 76,
-                decoration: BoxDecoration(
-                  color: book.color,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.menu_book, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${book.author} • ${book.category}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      book.description,
-                      maxLines: _expanded ? null : 2,
-                      overflow: _expanded
-                          ? TextOverflow.visible
-                          : TextOverflow.ellipsis,
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => setState(() => _expanded = !_expanded),
-                        child: Text(_expanded ? 'Thu gọn' : 'Xem thêm'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Trạng thái rỗng khi tìm kiếm không có kết quả.
-class _EmptyView extends StatelessWidget {
-  const _EmptyView({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(
-            Icons.menu_book,
-            size: 72,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            message,
-            style: Theme.of(context).textTheme.titleMedium,
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Trang chi tiết tối giản, dùng `SingleChildScrollView` cho nội dung ít.
-class _BookDetailPage extends StatelessWidget {
-  const _BookDetailPage({required this.book});
-
-  final Book book;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(book.title)),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Container(
-              width: double.infinity,
-              height: 250,
-              color: book.color,
-              child: const Center(
-                child: Icon(Icons.menu_book, color: Colors.white, size: 96),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    book.title,
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Text('Tác giả: ${book.author}'),
-                  const SizedBox(height: 4),
-                  Text('Thể loại: ${book.category}'),
-                  const SizedBox(height: 16),
-                  Text(
-                    book.description,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
