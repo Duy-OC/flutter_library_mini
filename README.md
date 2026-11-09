@@ -142,7 +142,7 @@ flutter_library_mini/
 ├── slide/                     # Tài liệu thuyết trình và mã nguồn tạo slide Chủ đề 5
 │   ├── assets/                # Hình ảnh minh họa dùng trong slide
 │   ├── build_slides.py        # Kịch bản Python tạo slide
-│   └── slide_chu_de_5.pdf     # Slide thuyết trình định dạng PDF
+│   └── slidechude5.pdf        # Slide thuyết trình định dạng PDF
 ├── test/                      # Các bài kiểm thử Widget và Unit tests
 │   └── widget_test.dart
 ├── pubspec.yaml               # Khai báo cấu hình dự án, assets và dependencies
